@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+package com.tejas.contentreview.contracts.grpc;
+
+option java_multiple_files = true;
+option java_package = "com.tejas.contentreview.contracts.grpc";
+option java_outer_classname = "ContentMetadataProto";
+
+service ContentMetadata {
+  // Returns NOT_FOUND for unknown content and INVALID_ARGUMENT for a blank id.
+  rpc GetContent(GetContentRequest) returns (GetContentResponse);
+}
+
+message GetContentRequest {
+  string content_id = 1;
+}
+
+message GetContentResponse {
+  string content_id = 1;
+  string creator_id = 2;
+  string title = 3;
+  bool license_valid = 4;
+  string license_note = 5;
+  string visibility = 6;
+  int32 applied_review_round = 7;
+}
