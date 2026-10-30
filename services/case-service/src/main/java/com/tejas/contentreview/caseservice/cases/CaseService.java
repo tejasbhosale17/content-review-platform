@@ -19,6 +19,7 @@ import java.util.HexFormat;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -33,14 +34,16 @@ public class CaseService {
     private final ContentLookup contentLookup;
     private final ObjectMapper mapper;
     private final TransactionTemplate tx;
+    private final ApplicationEventPublisher events;
 
     public CaseService(CaseRepository cases, IdempotencyRepository idempotency, ContentLookup contentLookup,
-                       ObjectMapper mapper, PlatformTransactionManager txManager) {
+                       ObjectMapper mapper, PlatformTransactionManager txManager, ApplicationEventPublisher events) {
         this.cases = cases;
         this.idempotency = idempotency;
         this.contentLookup = contentLookup;
         this.mapper = mapper;
         this.tx = new TransactionTemplate(txManager);
+        this.events = events;
     }
 
     public CaseOutcome createCase(String reporterId, String idempotencyKey, CreateCaseRequest request) {
@@ -87,6 +90,8 @@ public class CaseService {
         CaseEntity entity = new CaseEntity(UUID.randomUUID().toString(), content.contentId(), content.creatorId(),
                 reporterId, reason, now());
         cases.saveAndFlush(entity);
+        events.publishEvent(new ReviewRequestPublisher.ReviewRequestedEvent(entity.getCaseId(), entity.getContentId(),
+                entity.getReviewRound(), reason, false));
         CaseResponse response = CaseResponse.from(entity);
         if (record != null) {
             record.complete(201, write(response));

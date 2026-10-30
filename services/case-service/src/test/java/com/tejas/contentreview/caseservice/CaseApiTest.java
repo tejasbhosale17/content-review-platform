@@ -37,7 +37,7 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 
 @SpringBootTest
 @AutoConfigureMockMvc
-@Import(MySqlTestConfig.class)
+@Import(InfraTestConfig.class)
 class CaseApiTest {
 
     @Autowired

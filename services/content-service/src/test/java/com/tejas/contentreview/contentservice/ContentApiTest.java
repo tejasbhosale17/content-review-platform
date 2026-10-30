@@ -18,7 +18,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 @SpringBootTest
 @AutoConfigureMockMvc
-@Import(MySqlTestConfig.class)
+@Import(InfraTestConfig.class)
 class ContentApiTest {
 
     @Autowired

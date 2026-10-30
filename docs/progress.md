@@ -37,5 +37,26 @@ Verification (actual): `.\mvnw.cmd -B verify`, JDK 21.0.10, real MySQL 8.4.13 vi
 
 Unresolved: no local MySQL for running the services by hand yet (Compose arrives in the Docker stage). kind/kubectl still not installed.
 
+## Stage 3 - Kafka review workflow (complete)
+
+Completed:
+- `contracts`: `EventCodec` (JSON <-> `EventEnvelope`, malformed input raises non-retryable `EventFormatException`).
+- case-service: creating a case publishes `ReviewRequested` to `case.review-requested.v1` (keyed by caseId) after the DB commit. A `case-projection` consumer applies `ReviewCompleted` results: round 1 -> DISMISSED/RESTRICTED, only from PENDING_REVIEW; duplicates and stale results are ignored by state.
+- review-service: `review-workers` consumer persists one decision per (case, round) (unique constraints), calls content metadata over HTTP (interim, gRPC later) outside the DB transaction, then publishes `ReviewCompleted` reusing the stored result event ID on redelivery. Demo policy: round 1 ALLOW iff license valid; round 2 ALLOW iff note contains `APPEAL_EVIDENCE_OK`.
+- content-service: `content-projection` consumer updates visibility with one atomic conditional UPDATE (`applied_review_round < :round`). Equal round + same decision = duplicate, equal round + different decision = logged conflict, older round = ignored, unknown content = logged and ignored.
+- Topics: 3 partitions, replication factor 1 (local). Consumers use manual per-record ack, `acks=all`, idempotent producer.
+
+Known interim behavior (replaced in the next stage):
+- Publishing is direct after commit, not an outbox: a crash between commit and send loses the request.
+- No consumer receipts table; no dead-letter topics. After 5 backoff attempts a failing record is skipped and logged.
+- Content metadata over HTTP instead of gRPC; no appeals endpoint yet.
+
+Verification (actual): `.\mvnw.cmd -B verify`, JDK 21.0.10, real MySQL 8.4.13 and Kafka (`apache/kafka:3.9.1`) via Testcontainers -> BUILD SUCCESS.
+- contracts: 6 passed
+- case-service: 19 passed (API/idempotency 9, workflow 6, content lookup 4)
+- review-service: 11 passed (policy 4, workflow 7)
+- content-service: 8 passed (API 4, projection 4 including a 20-iteration concurrent round-1/round-2 race)
+- Not verified: manual run of the three jars together; behavior under broker/service crashes.
+
 ## Next stage
-`feat: implement Kafka review workflow` - Kafka topics/consumers, review-service decision persistence, case/content projections.
+`feat: add outbox publishing and idempotent consumers` - transactional outbox, receipts table, dead-letter topics and replay.

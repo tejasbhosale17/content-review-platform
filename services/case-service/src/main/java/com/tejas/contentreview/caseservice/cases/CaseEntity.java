@@ -1,5 +1,6 @@
 package com.tejas.contentreview.caseservice.cases;
 
+import com.tejas.contentreview.contracts.events.ReviewCompletedPayload.Decision;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -58,6 +59,25 @@ public class CaseEntity {
         this.reviewRound = 1;
         this.createdAt = now;
         this.updatedAt = now;
+    }
+
+    /**
+     * Applies a review result only when it matches the expected round and a state that is waiting for it.
+     * Anything else (duplicate, stale, out of order) leaves the case untouched.
+     */
+    public boolean applyReviewResult(int round, Decision decision, Instant now) {
+        CaseStatus next = null;
+        if (status == CaseStatus.PENDING_REVIEW && reviewRound == 1 && round == 1) {
+            next = decision == Decision.ALLOW ? CaseStatus.DISMISSED : CaseStatus.RESTRICTED;
+        } else if (status == CaseStatus.APPEAL_PENDING && reviewRound == 2 && round == 2) {
+            next = decision == Decision.ALLOW ? CaseStatus.RESTORED : CaseStatus.RESTRICTION_CONFIRMED;
+        }
+        if (next == null) {
+            return false;
+        }
+        this.status = next;
+        this.updatedAt = now;
+        return true;
     }
 
     public String getCaseId() { return caseId; }
