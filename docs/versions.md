@@ -10,7 +10,8 @@
 | protobuf-maven-plugin (ascopes) | 5.1.11 | Generates Java at build time into `target/` |
 | Testcontainers | 1.21.4 | Declared in dependency management; used from later stages |
 | Awaitility | 4.3.0 | Declared in dependency management; used from later stages |
-| MySQL | 8.4 | Image tag to be pinned in the Compose stage |
+| MySQL | 8.4.13 (`mysql:8.4.13` image, used by Testcontainers; Compose will reuse it) | Pinned from `mysql:8.4` at 2026-10-30 |
+| Flyway, Hibernate, MySQL Connector/J | Managed by Spring Boot 3.5.16 BOM | `flyway-mysql` required for MySQL 8.4 |
 
 Versions were checked against Maven Central metadata. No snapshot third-party dependencies are used.
 Kafka, MySQL and Spring Kafka/Flyway/JPA versions will be added here as those stages land.

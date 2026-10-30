@@ -1,6 +1,16 @@
 spring:
   application:
     name: content-service
+  datasource:
+    url: ${CONTENT_DB_URL:jdbc:mysql://localhost:3306/content_db}
+    username: ${CONTENT_DB_USER:content_user}
+    password: ${CONTENT_DB_PASSWORD:}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate.jdbc.time_zone: UTC
 server:
   port: 8083
 management:
