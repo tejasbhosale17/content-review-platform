@@ -72,5 +72,22 @@ Verification (`.\mvnw.cmd -B verify`, real MySQL 8.4 and Kafka Testcontainers): 
 - content-service: 10 passed (API 4, projection 6 including receipt dedupe and dead-lettering of a malformed record)
 - Not verified: manual run of the three jars together; broker/service crash recovery beyond injected failures; DLT replay for content-service has no dedicated test.
 
+## Stage 5 - gRPC content metadata service (complete)
+Implemented:
+- `contentmetadata.proto` in `contracts`; Java messages and stubs are generated during the Maven build (protobuf-maven-plugin with `protoc-gen-grpc-java`) and not committed. The earlier plugin config used a parameter the plugin ignored, so stubs were silently not generated; fixed with `<plugins><plugin kind="binary-maven">`.
+- content-service: gRPC server on `GRPC_PORT` (default 9090) started with the app, `GetContent` plus the standard gRPC health service. Returns `NOT_FOUND` for unknown content, `INVALID_ARGUMENT` for a blank or over-36-character ID, `UNAVAILABLE` if the store fails.
+- review-service: `GrpcContentMetadataClient` replaces the interim REST client (removed). Every call has a 2s deadline (`content-service.grpc.deadline`). Mapping: `NOT_FOUND` -> empty (the review attempt fails and goes through retry/DLT), `INVALID_ARGUMENT` -> `InvalidContentRequestException` (not retried, dead-lettered immediately), `DEADLINE_EXCEEDED` -> `ContentDeadlineExceededException`, anything else -> `ContentUnavailableException` (both retried with backoff).
+- Target is configured by `CONTENT_SERVICE_GRPC_TARGET`; no hard-coded localhost for container deployments (Compose/Kubernetes wiring comes in the infra stage).
+- case-service still validates content over HTTP when a complaint is created; the spec only requires gRPC for review-service.
+
+Verification (`.\mvnw.cmd -B verify`, real MySQL 8.4 and Kafka Testcontainers): BUILD SUCCESS.
+- contracts: 6 passed
+- case-service: 24 passed
+- review-service: 24 passed (client 6, policy 4, outbox relay 5, workflow 9)
+- content-service: 14 passed (API 4, gRPC 4, projection 6)
+- gRPC server tests call the real server over a real socket against MySQL: found, not found, invalid IDs, health SERVING.
+- gRPC client tests use the real client over a real socket against a scripted server: field mapping, not found, invalid argument, server error, deadline expiry (< 3s with a 500ms deadline), unreachable server.
+- Not verified: the real review-service talking to the real content-service in one run (workflow tests still stub the metadata client at the Java interface); to be covered by the Compose/Kubernetes and recovery stages.
+
 ## Next stage
-`feat: integrate gRPC metadata service` - content-service gRPC server, review-service client with deadlines.
+`feat: implement appeals and stale-event protection` - `POST /api/cases/{id}/appeals`, one appeal per case, round 2.

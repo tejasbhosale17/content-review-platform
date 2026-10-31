@@ -12,7 +12,7 @@ Status: in progress - see [docs/progress.md](docs/progress.md).
 
 Tests start real MySQL containers, so Docker must be running.
 
-Service ports: case-service 8081, review-service 8082, content-service 8083 (gRPC 9090 in a later stage).
+Service ports: case-service 8081, review-service 8082, content-service 8083 (HTTP) and 9090 (gRPC, set `GRPC_PORT` to change). review-service reaches content-service via `CONTENT_SERVICE_GRPC_TARGET` (default `localhost:9090`; use the service DNS name in Compose/Kubernetes).
 Copy `.env.example` to `.env` for local settings; `.env` is git-ignored.
 
 ## API (current)

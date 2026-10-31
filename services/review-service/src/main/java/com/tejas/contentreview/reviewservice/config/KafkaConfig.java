@@ -51,7 +51,8 @@ public class KafkaConfig {
         backOff.setMaxInterval(2_000);
         backOff.setMaxAttempts(5);
         DefaultErrorHandler handler = new DefaultErrorHandler(recoverer, backOff);
-        handler.addNotRetryableExceptions(EventFormatException.class);
+        handler.addNotRetryableExceptions(EventFormatException.class,
+                com.tejas.contentreview.reviewservice.content.ContentMetadataClient.InvalidContentRequestException.class);
         handler.setRetryListeners(new RetryListener() {
             @Override
             public void failedDelivery(ConsumerRecord<?, ?> record, Exception ex, int deliveryAttempt) {

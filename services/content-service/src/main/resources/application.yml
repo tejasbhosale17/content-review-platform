@@ -29,6 +29,9 @@ spring:
       ack-mode: record
 server:
   port: 8083
+grpc:
+  server:
+    port: ${GRPC_PORT:9090}
 management:
   endpoints:
     web:
