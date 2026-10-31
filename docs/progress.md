@@ -58,5 +58,19 @@ Verification (actual): `.\mvnw.cmd -B verify`, JDK 21.0.10, real MySQL 8.4.13 an
 - content-service: 8 passed (API 4, projection 4 including a 20-iteration concurrent round-1/round-2 race)
 - Not verified: manual run of the three jars together; behavior under broker/service crashes.
 
+## Stage 4 - Outbox publishing and idempotent consumers (complete)
+Implemented:
+- Transactional outbox (`outbox_events`) in case-service (`ReviewRequested`) and review-service (`ReviewCompleted`); the row is written in the same DB transaction as the business change. A relay publishes in id order using leases, retries with exponential backoff, and exposes `outbox.published`, `outbox.publish.failures` and `outbox.pending` metrics.
+- `processed_events` receipts in all three services, written in the same transaction as the effect, so a rollback removes the receipt.
+- Per-group dead-letter topics (`<topic>.<group>.dlt`) after 5 backoff attempts; malformed events are not retried. `POST /internal/dlt/replay` re-publishes dead letters (unauthenticated until the access-control stage).
+- Delivery is at-least-once: a crash between send and `markPublished` can produce a duplicate, which receipts and round checks make harmless. Per-key ordering assumes a single relay instance.
+
+Verification (`.\mvnw.cmd -B verify`, real MySQL 8.4 and Kafka Testcontainers): BUILD SUCCESS.
+- contracts: 6 passed
+- case-service: 24 passed (API 9, reliability 5, workflow 6, content lookup 4)
+- review-service: 18 passed (policy 4, outbox relay 5, workflow 9)
+- content-service: 10 passed (API 4, projection 6 including receipt dedupe and dead-lettering of a malformed record)
+- Not verified: manual run of the three jars together; broker/service crash recovery beyond injected failures; DLT replay for content-service has no dedicated test.
+
 ## Next stage
-`feat: add outbox publishing and idempotent consumers` - transactional outbox, receipts table, dead-letter topics and replay.
+`feat: integrate gRPC metadata service` - content-service gRPC server, review-service client with deadlines.

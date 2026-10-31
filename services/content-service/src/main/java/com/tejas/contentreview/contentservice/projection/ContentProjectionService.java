@@ -2,6 +2,8 @@ package com.tejas.contentreview.contentservice.projection;
 
 import com.tejas.contentreview.contentservice.content.Content;
 import com.tejas.contentreview.contentservice.content.ContentRepository;
+import com.tejas.contentreview.contentservice.reliability.ProcessedEvents;
+import com.tejas.contentreview.contracts.events.Topics;
 import com.tejas.contentreview.contracts.events.EventEnvelope;
 import com.tejas.contentreview.contracts.events.ReviewCompletedPayload;
 import com.tejas.contentreview.contracts.events.ReviewCompletedPayload.Decision;
@@ -22,18 +24,25 @@ public class ContentProjectionService {
     private static final Logger log = LoggerFactory.getLogger(ContentProjectionService.class);
 
     private final ContentRepository contents;
+    private final ProcessedEvents processed;
 
-    public ContentProjectionService(ContentRepository contents) {
+    public ContentProjectionService(ContentRepository contents, ProcessedEvents processed) {
         this.contents = contents;
+        this.processed = processed;
     }
 
     /**
      * Applies a review result when its round is newer than the stored one.
      * Equal rounds are harmless repeats (or a reported conflict if the decision differs); older rounds are ignored,
-     * so a late round-1 restriction can never overwrite a round-2 restoration.
+     * so a late round-1 restriction can never overwrite a round-2 restoration. The receipt is written in the same
+     * transaction, so an event ID is applied at most once and a failure rolls back both.
      */
     @Transactional
     public Outcome apply(EventEnvelope<ReviewCompletedPayload> event) {
+        if (!processed.markProcessed(Topics.GROUP_CONTENT_PROJECTION, event.eventId().toString())) {
+            log.info("Duplicate review result ignored contentId={} eventId={}", event.contentId(), event.eventId());
+            return Outcome.DUPLICATE;
+        }
         Content.Visibility target = event.payload().decision() == Decision.ALLOW
                 ? Content.Visibility.VISIBLE : Content.Visibility.RESTRICTED;
         int updated = contents.applyReviewRound(event.contentId(), event.reviewRound(), target,

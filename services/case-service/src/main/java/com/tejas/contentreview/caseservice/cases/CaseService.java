@@ -19,7 +19,11 @@ import java.util.HexFormat;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.context.ApplicationEventPublisher;
+import com.tejas.contentreview.caseservice.reliability.OutboxStore;
+import com.tejas.contentreview.contracts.events.EventCodec;
+import com.tejas.contentreview.contracts.events.EventEnvelope;
+import com.tejas.contentreview.contracts.events.ReviewRequestedPayload;
+import com.tejas.contentreview.contracts.events.Topics;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -34,16 +38,16 @@ public class CaseService {
     private final ContentLookup contentLookup;
     private final ObjectMapper mapper;
     private final TransactionTemplate tx;
-    private final ApplicationEventPublisher events;
+    private final OutboxStore outbox;
 
     public CaseService(CaseRepository cases, IdempotencyRepository idempotency, ContentLookup contentLookup,
-                       ObjectMapper mapper, PlatformTransactionManager txManager, ApplicationEventPublisher events) {
+                       ObjectMapper mapper, PlatformTransactionManager txManager, OutboxStore outbox) {
         this.cases = cases;
         this.idempotency = idempotency;
         this.contentLookup = contentLookup;
         this.mapper = mapper;
         this.tx = new TransactionTemplate(txManager);
-        this.events = events;
+        this.outbox = outbox;
     }
 
     public CaseOutcome createCase(String reporterId, String idempotencyKey, CreateCaseRequest request) {
@@ -90,8 +94,10 @@ public class CaseService {
         CaseEntity entity = new CaseEntity(UUID.randomUUID().toString(), content.contentId(), content.creatorId(),
                 reporterId, reason, now());
         cases.saveAndFlush(entity);
-        events.publishEvent(new ReviewRequestPublisher.ReviewRequestedEvent(entity.getCaseId(), entity.getContentId(),
-                entity.getReviewRound(), reason, false));
+        var requested = new EventEnvelope<>(UUID.randomUUID(), "ReviewRequested", 1, Instant.now(), entity.getCaseId(),
+                entity.getContentId(), entity.getReviewRound(), UUID.randomUUID().toString(),
+                new ReviewRequestedPayload(reason, false));
+        outbox.add(requested.eventId().toString(), Topics.REVIEW_REQUESTED, entity.getCaseId(), EventCodec.toJson(requested));
         CaseResponse response = CaseResponse.from(entity);
         if (record != null) {
             record.complete(201, write(response));

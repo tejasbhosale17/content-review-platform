@@ -48,6 +48,8 @@ class ContentProjectionTest {
     KafkaTemplate<String, String> kafka;
     @Autowired
     KafkaContainer kafkaContainer;
+    @Autowired
+    org.springframework.jdbc.core.JdbcTemplate jdbc;
 
     private String newContent() {
         String id = UUID.randomUUID().toString();
@@ -132,6 +134,41 @@ class ContentProjectionTest {
             }
         } finally {
             pool.shutdownNow();
+        }
+    }
+
+    @Test
+    void sameEventIdIsAppliedOnlyOnceEvenIfStateWouldAllowIt() {
+        String id = newContent();
+        var event = result(id, 1, Decision.RESTRICT);
+        assertThat(projection.apply(event)).isEqualTo(Outcome.APPLIED);
+
+        jdbc.update("UPDATE contents SET applied_review_round = 0, visibility = 'VISIBLE' WHERE content_id = ?", id);
+        assertThat(projection.apply(event)).isEqualTo(Outcome.DUPLICATE);
+        assertThat(reload(id).getVisibility()).isEqualTo(Visibility.VISIBLE);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM processed_events WHERE consumer_group = ? AND event_id = ?",
+                Integer.class, Topics.GROUP_CONTENT_PROJECTION, event.eventId().toString())).isEqualTo(1);
+    }
+
+    @Test
+    void malformedResultIsDeadLetteredAndLaterEventsStillApply() {
+        String poisonKey = UUID.randomUUID().toString();
+        String id = newContent();
+        kafka.send(Topics.REVIEW_COMPLETED, poisonKey, "{broken");
+        kafka.send(Topics.REVIEW_COMPLETED, "case-" + id, EventCodec.toJson(result(id, 1, Decision.RESTRICT)));
+
+        await().atMost(Duration.ofSeconds(45)).untilAsserted(() ->
+                assertThat(reload(id).getVisibility()).isEqualTo(Visibility.RESTRICTED));
+        try (var consumer = new KafkaConsumer<>(Map.<String, Object>of(
+                ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaContainer.getBootstrapServers(),
+                ConsumerConfig.GROUP_ID_CONFIG, "dlt-test-" + UUID.randomUUID(),
+                ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest"), new StringDeserializer(), new StringDeserializer())) {
+            consumer.subscribe(List.of(Topics.deadLetter(Topics.REVIEW_COMPLETED, Topics.GROUP_CONTENT_PROJECTION)));
+            List<String> keys = new ArrayList<>();
+            await().atMost(Duration.ofSeconds(45)).untilAsserted(() -> {
+                consumer.poll(Duration.ofMillis(200)).forEach(r -> keys.add(r.key()));
+                assertThat(keys).contains(poisonKey);
+            });
         }
     }
 

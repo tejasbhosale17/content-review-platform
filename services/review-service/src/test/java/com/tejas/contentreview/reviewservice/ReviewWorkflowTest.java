@@ -13,7 +13,11 @@ import com.tejas.contentreview.contracts.events.ReviewRequestedPayload;
 import com.tejas.contentreview.contracts.events.Topics;
 import com.tejas.contentreview.reviewservice.content.ContentMetadata;
 import com.tejas.contentreview.reviewservice.content.ContentMetadataClient;
+import com.tejas.contentreview.reviewservice.reliability.DltReplayService;
 import com.tejas.contentreview.reviewservice.review.ReviewDecisionRepository;
+import io.micrometer.core.instrument.MeterRegistry;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.kafka.support.KafkaHeaders;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -45,6 +49,12 @@ class ReviewWorkflowTest {
     KafkaContainer kafkaContainer;
     @Autowired
     ReviewDecisionRepository decisions;
+    @Autowired
+    JdbcTemplate jdbc;
+    @Autowired
+    MeterRegistry registry;
+    @Autowired
+    DltReplayService replayService;
 
     @MockitoBean
     ContentMetadataClient metadataClient;
@@ -133,18 +143,24 @@ class ReviewWorkflowTest {
     }
 
     @Test
-    void duplicateRequestKeepsOneDecisionAndRepublishesSameEventId() {
+    void duplicateRequestProducesOneResultEvent() {
         String caseId = UUID.randomUUID().toString();
         String contentId = UUID.randomUUID().toString();
         stubContent(contentId, false, null);
         UUID requestId = UUID.randomUUID();
         send(caseId, contentId, 1, requestId);
         send(caseId, contentId, 1, requestId);
+        // Same key, same partition: the round-2 result proves the duplicate before it was already consumed.
+        send(caseId, contentId, 2, UUID.randomUUID());
 
         var results = awaitResults(caseId, 2).stream().map(ReviewWorkflowTest::parse).toList();
-        assertThat(results.get(0).eventId()).isEqualTo(results.get(1).eventId());
-        assertThat(results).extracting(e -> e.payload().decision()).containsOnly(Decision.RESTRICT);
-        assertThat(decisions.findAll().stream().filter(d -> d.getCaseId().equals(caseId))).hasSize(1);
+        assertThat(results).extracting(EventEnvelope::reviewRound).containsExactlyInAnyOrder(1, 2);
+        assertThat(results).extracting(e -> e.eventId()).doesNotHaveDuplicates();
+        assertThat(decisions.findAll().stream().filter(d -> d.getCaseId().equals(caseId))).hasSize(2);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM outbox_events WHERE message_key = ?", Integer.class, caseId))
+                .isEqualTo(2);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM processed_events WHERE consumer_group = ? AND event_id = ?",
+                Integer.class, Topics.GROUP_REVIEW_WORKERS, requestId.toString())).isEqualTo(1);
     }
 
     @Test
@@ -157,8 +173,11 @@ class ReviewWorkflowTest {
 
         stubContent(contentId, true, null);
         send(caseId, contentId, 1, UUID.randomUUID());
+        send(caseId, contentId, 2, UUID.randomUUID());
         var results = awaitResults(caseId, 2).stream().map(ReviewWorkflowTest::parse).toList();
-        assertThat(results).extracting(e -> e.payload().decision()).containsOnly(Decision.RESTRICT);
+        assertThat(results).filteredOn(e -> e.reviewRound() == 1).singleElement()
+                .satisfies(e -> assertThat(e.payload().decision()).isEqualTo(Decision.RESTRICT));
+        assertThat(decisions.findByCaseIdAndReviewRound(caseId, 1).orElseThrow().getDecision()).isEqualTo(Decision.RESTRICT);
     }
 
     @Test
@@ -175,7 +194,7 @@ class ReviewWorkflowTest {
     }
 
     @Test
-    void malformedEventIsSkippedWithoutBlockingLaterEvents() {
+    void malformedEventGoesToDeadLetterTopicWithoutBlockingLaterEvents() {
         String caseId = UUID.randomUUID().toString();
         String contentId = UUID.randomUUID().toString();
         stubContent(contentId, true, null);
@@ -183,5 +202,66 @@ class ReviewWorkflowTest {
         send(caseId, contentId, 1, UUID.randomUUID());
 
         assertThat(awaitResults(caseId, 1)).hasSize(1);
+        var dead = awaitDeadLetters(caseId);
+        assertThat(dead.value()).isEqualTo("{not valid json");
+        assertThat(new String(dead.headers().lastHeader(KafkaHeaders.DLT_ORIGINAL_TOPIC).value()))
+                .isEqualTo(Topics.REVIEW_REQUESTED);
+        assertThat(dead.headers().lastHeader(KafkaHeaders.DLT_EXCEPTION_FQCN)).isNotNull();
+    }
+
+    @Test
+    void persistentFailureIsRetriedThenDeadLetteredAndCounted() {
+        String caseId = UUID.randomUUID().toString();
+        String contentId = UUID.randomUUID().toString();
+        when(metadataClient.get(contentId)).thenThrow(new ContentMetadataClient.ContentUnavailableException("down", null));
+        double retriesBefore = registry.counter("kafka.consumer.retries", "group", Topics.GROUP_REVIEW_WORKERS,
+                "topic", Topics.REVIEW_REQUESTED).count();
+        double deadBefore = registry.counter("kafka.consumer.dead_lettered", "group", Topics.GROUP_REVIEW_WORKERS,
+                "topic", Topics.REVIEW_REQUESTED).count();
+        send(caseId, contentId, 1, UUID.randomUUID());
+
+        assertThat(awaitDeadLetters(caseId).key()).isEqualTo(caseId);
+        assertThat(registry.counter("kafka.consumer.retries", "group", Topics.GROUP_REVIEW_WORKERS,
+                "topic", Topics.REVIEW_REQUESTED).count()).isGreaterThan(retriesBefore);
+        assertThat(registry.counter("kafka.consumer.dead_lettered", "group", Topics.GROUP_REVIEW_WORKERS,
+                "topic", Topics.REVIEW_REQUESTED).count()).isEqualTo(deadBefore + 1);
+        assertThat(decisions.findByCaseIdAndReviewRound(caseId, 1)).isEmpty();
+    }
+
+    @Test
+    void replayRedeliversDeadLetteredRequestOnceDependencyRecovers() {
+        String caseId = UUID.randomUUID().toString();
+        String contentId = UUID.randomUUID().toString();
+        when(metadataClient.get(contentId)).thenThrow(new ContentMetadataClient.ContentUnavailableException("down", null));
+        send(caseId, contentId, 1, UUID.randomUUID());
+        awaitDeadLetters(caseId);
+
+        org.mockito.Mockito.doReturn(Optional.of(new ContentMetadata(contentId, "creator-1", true, null)))
+                .when(metadataClient).get(contentId);
+        int replayed = replayService.replay(Topics.deadLetter(Topics.REVIEW_REQUESTED, Topics.GROUP_REVIEW_WORKERS),
+                Topics.GROUP_REVIEW_WORKERS, 1000);
+
+        assertThat(replayed).isGreaterThanOrEqualTo(1);
+        assertThat(parse(awaitResults(caseId, 1).get(0)).payload().decision()).isEqualTo(Decision.ALLOW);
+    }
+
+    private ConsumerRecord<String, String> awaitDeadLetters(String caseId) {
+        List<ConsumerRecord<String, String>> found = new ArrayList<>();
+        try (var consumer = new KafkaConsumer<>(Map.<String, Object>of(
+                ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaContainer.getBootstrapServers(),
+                ConsumerConfig.GROUP_ID_CONFIG, "dlt-test-" + UUID.randomUUID(),
+                ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest"),
+                new StringDeserializer(), new StringDeserializer())) {
+            consumer.subscribe(List.of(Topics.deadLetter(Topics.REVIEW_REQUESTED, Topics.GROUP_REVIEW_WORKERS)));
+            await().atMost(Duration.ofSeconds(60)).pollInterval(Duration.ofMillis(200)).untilAsserted(() -> {
+                consumer.poll(Duration.ofMillis(200)).forEach(r -> {
+                    if (caseId.equals(r.key())) {
+                        found.add(r);
+                    }
+                });
+                assertThat(found).isNotEmpty();
+            });
+        }
+        return found.get(0);
     }
 }
