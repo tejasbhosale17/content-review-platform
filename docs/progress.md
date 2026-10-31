@@ -89,5 +89,21 @@ Verification (`.\mvnw.cmd -B verify`, real MySQL 8.4 and Kafka Testcontainers): 
 - gRPC client tests use the real client over a real socket against a scripted server: field mapping, not found, invalid argument, server error, deadline expiry (< 3s with a 500ms deadline), unreachable server.
 - Not verified: the real review-service talking to the real content-service in one run (workflow tests still stub the metadata client at the Java interface); to be covered by the Compose/Kubernetes and recovery stages.
 
+## Stage 6 - Appeals and stale-event protection (complete)
+Implemented:
+- `POST /api/cases/{caseId}/appeals` (body `{"statement": "..."}`, `X-Actor-Id`, optional `Idempotency-Key`). Returns 201 with the appeal and the resulting case state (`APPEAL_PENDING`, round 2); 404 for an unknown case, 400 for invalid input, 409 for any case that is not `RESTRICTED` (pending, dismissed, already appealed, restored, confirmed).
+- State change is a database compare-and-set (`RESTRICTED -> APPEAL_PENDING`, round 2). In the same transaction: idempotency record, `appeals` row (migration `V3`, unique `case_id` = one appeal per case) and the round-2 `ReviewRequested` outbox row (`appeal=true`).
+- Idempotency: same key and payload replays the original response (`Idempotency-Replayed: true`); same key with a different payload returns 409.
+- Stale-event protection: case-service applies a result only for the expected round and state; content-service compares rounds atomically (stage 3) and now also dedupes by event ID (stage 4). The review policy still decides round 2 from the synthetic license note fixture (`APPEAL_EVIDENCE_OK`), not from the appeal statement.
+- Found and fixed during testing: the compare-and-set clears the persistence context and detached the idempotency record, so its response was not saved and replays returned 409. The record is now saved explicitly.
+- Interim: any caller can appeal; restricting appeals to the content creator comes with access control in stage 8.
+
+Verification (`.\mvnw.cmd -B verify`, real MySQL 8.4 and Kafka Testcontainers): BUILD SUCCESS.
+- contracts: 6 passed
+- case-service: 31 passed (new appeal tests 7: start round 2 and publish request, rejected states/404/400, second and third appeals rejected with a single outbox row, ALLOW restores / RESTRICT confirms, late round-1 results cannot overwrite an appeal in progress or its outcome, idempotent replay and payload conflict, 8 concurrent appeals give exactly one 201, seven 409s, one appeal row and one outbox row)
+- review-service: 24 passed
+- content-service: 14 passed
+- Not verified: a full appeal flowing through the three real services in one run (the case-service tests inject review results through Kafka); to be covered by the Compose/Kubernetes and recovery stages.
+
 ## Next stage
-`feat: implement appeals and stale-event protection` - `POST /api/cases/{id}/appeals`, one appeal per case, round 2.
+`feat: add access control and observability` - HTTP Basic roles, MDC logging, Micrometer metrics, admin-only DLT replay.
