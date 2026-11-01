@@ -122,5 +122,20 @@ Verification (`.\mvnw.cmd -B verify`, real MySQL 8.4 and Kafka Testcontainers): 
 - Observed in test output: JSON log lines contain `service` and the MDC fields.
 - Not verified: Prometheus scrape output over HTTP (metrics are asserted through the `MeterRegistry`), the `DltController` replay with an admin credential (only the 401/403 rejections are tested), and the demo credentials end to end across running services.
 
+## Infra stage - Docker, Compose and local Kubernetes (complete)
+Implemented:
+- `infra/docker/Dockerfile`: one multi-stage build for all three services (JDK 21.0.10 build, JRE 21.0.10 runtime, non-root uid 10001, `MaxRAMPercentage=75`). `.dockerignore` keeps `.env`, `target/`, docs and scripts out of the build context.
+- `compose.yaml`: MySQL 8.4.13 (one instance, three logical databases each with its own user, created by `infra/mysql/init-databases.sh`), a single-node KRaft Kafka 3.9.1, a `kafka-init` job creating topics (`infra/kafka/create-topics.sh`, 3 partitions for the main topics, 1 for the DLTs) and the three services with readiness healthchecks. Ports are bound to 127.0.0.1; secrets come from `.env`.
+- `k8s/base/`: namespace and ConfigMap, MySQL and Kafka StatefulSets with PVCs, a topic-init Job, Deployments with RollingUpdate, startup/readiness/liveness probes, resource requests/limits and non-root security context, ClusterIP Services. review-service runs 2 replicas in the `review-workers` group. Secrets and init scripts are created from `.env` and `infra/` by `scripts/k8s-up.ps1`, never committed.
+- `scripts/`: `smoke-test.ps1` (end-to-end flow over HTTP), `k8s-up.ps1` (build, create kind cluster, load images, deploy), `k8s-smoke.ps1` (port-forward and smoke test), `k8s-down.ps1`.
+
+Verification (actual runs on Docker Desktop 29.9.2, kind v0.33.0, kubectl v1.36.1):
+- Compose: `docker compose up -d --build` -> all five containers healthy; `scripts\smoke-test.ps1` -> all 13 checks passed (401, public health, content creation, complaint, asynchronous RESTRICTED, duplicate 409, reporter appeal 403, appeal reaching round-2 `RESTRICTION_CONFIRMED`, second appeal 409, admin-only metrics).
+- kind: `scripts\k8s-up.ps1` -> every pod Running/Ready, kafka-init Completed; `scripts\k8s-smoke.ps1` -> all 13 checks passed. `kafka-consumer-groups.sh --describe --group review-workers` showed the two review-service pods as separate members splitting the 3 partitions of `case.review-requested.v1`.
+- Bugs found and fixed while verifying: shell scripts written with CRLF broke `kafka-init` (LF enforced), and parallel image builds raced on the Maven cache (`sharing=locked`).
+- The Maven build and unit tests were not re-run for this stage (no Java source changed).
+- Not verified: rolling update behaviour under load, pod/node failure recovery (next stage), any non-kind cluster, image scanning.
+- Limits: one Kafka broker (replication factor 1, no HA), one MySQL instance with three logical databases, plaintext Kafka and HTTP, demo credentials. The kind smoke test skips the `reviews.completed` counter assertion because counters are per replica and the port-forward reaches one pod.
+
 ## Next stage
-`infra: add local Kubernetes deployment` - Dockerfiles, Compose, kind manifests (kind and kubectl still need installing).
+`test: add recovery and performance checks` - worker restart with queued messages, crash between DB commit and publish, `docs/results.md` with measured numbers only.

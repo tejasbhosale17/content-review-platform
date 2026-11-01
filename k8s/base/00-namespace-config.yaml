@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: content-review
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: content-review
+data:
+  KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+  MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED: "true"
+  CONTENT_SERVICE_GRPC_TARGET: content-service:9090
+  CASE_DB_URL: jdbc:mysql://mysql:3306/case_db
+  REVIEW_DB_URL: jdbc:mysql://mysql:3306/review_db
+  CONTENT_DB_URL: jdbc:mysql://mysql:3306/content_db

@@ -17,6 +17,25 @@ Copy `.env.example` to `.env` for local settings; `.env` is git-ignored. The ser
 
 case-service looks up content over gRPC (`CONTENT_SERVICE_GRPC_TARGET`, default `localhost:9090`).
 
+## Run locally
+
+```powershell
+Copy-Item .env.example .env        # then change the passwords
+docker compose up -d --build       # MySQL, Kafka, three services (ports on 127.0.0.1)
+.\scripts\smoke-test.ps1           # end-to-end check
+docker compose down                # add -v to delete data
+```
+
+Kubernetes (kind, needs docker, kind and kubectl):
+
+```powershell
+.\scripts\k8s-up.ps1               # build images, create cluster, deploy to namespace content-review
+.\scripts\k8s-smoke.ps1            # port-forward and run the smoke test
+.\scripts\k8s-down.ps1             # delete the cluster
+```
+
+Limitations: one Kafka broker (replication factor 1) and one MySQL instance with three logical databases, so there is no high availability; Kafka and HTTP are plaintext; accounts are demo credentials.
+
 ## Accounts and observability
 
 - HTTP Basic accounts: `reporter` (files complaints), `creator` (publishes content, appeals), `admin` (reads any case, `/internal/**`, `/actuator/info`, `/actuator/prometheus`). `/actuator/health` is public.

@@ -1,0 +1,14 @@
+.git
+.github
+.idea
+.vscode
+.env
+.env.*
+!.env.example
+**/target
+**/*.log
+**/logs
+docs
+k8s
+scripts
+load-tests
