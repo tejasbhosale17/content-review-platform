@@ -24,6 +24,8 @@ import com.tejas.contentreview.contracts.events.EventCodec;
 import com.tejas.contentreview.contracts.events.EventEnvelope;
 import com.tejas.contentreview.contracts.events.ReviewRequestedPayload;
 import com.tejas.contentreview.contracts.events.Topics;
+import io.micrometer.core.instrument.MeterRegistry;
+import org.slf4j.MDC;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -39,9 +41,12 @@ public class CaseService {
     private final ObjectMapper mapper;
     private final TransactionTemplate tx;
     private final OutboxStore outbox;
+    private final MeterRegistry meters;
 
     public CaseService(CaseRepository cases, IdempotencyRepository idempotency, ContentLookup contentLookup,
-                       ObjectMapper mapper, PlatformTransactionManager txManager, OutboxStore outbox) {
+                       ObjectMapper mapper, PlatformTransactionManager txManager, OutboxStore outbox,
+                       MeterRegistry meters) {
+        this.meters = meters;
         this.cases = cases;
         this.idempotency = idempotency;
         this.contentLookup = contentLookup;
@@ -67,6 +72,7 @@ public class CaseService {
 
         try {
             CaseResponse created = tx.execute(status -> persist(reporterId, idempotencyKey, hash, content, reason));
+            meters.counter("complaints.accepted").increment();
             return new CaseOutcome(created, false);
         } catch (DataIntegrityViolationException e) {
             // A concurrent request won: either the same idempotency key or a case for this content already exists.
@@ -80,9 +86,13 @@ public class CaseService {
         }
     }
 
-    public CaseResponse getCase(String caseId) {
-        return cases.findById(caseId).map(CaseResponse::from)
+    public CaseResponse getCase(String caseId, String principal, boolean admin) {
+        CaseEntity c = cases.findById(caseId)
                 .orElseThrow(() -> ApiException.notFound("Case " + caseId + " not found"));
+        if (!admin && !principal.equals(c.getReporterId()) && !principal.equals(c.getCreatorId())) {
+            throw ApiException.forbidden("You are not a party to this case");
+        }
+        return CaseResponse.from(c);
     }
 
     private CaseResponse persist(String reporterId, String key, String hash, ContentInfo content, String reason) {
@@ -95,7 +105,7 @@ public class CaseService {
                 reporterId, reason, now());
         cases.saveAndFlush(entity);
         var requested = new EventEnvelope<>(UUID.randomUUID(), "ReviewRequested", 1, Instant.now(), entity.getCaseId(),
-                entity.getContentId(), entity.getReviewRound(), UUID.randomUUID().toString(),
+                entity.getContentId(), entity.getReviewRound(), correlationId(),
                 new ReviewRequestedPayload(reason, false));
         outbox.add(requested.eventId().toString(), Topics.REVIEW_REQUESTED, entity.getCaseId(), EventCodec.toJson(requested));
         CaseResponse response = CaseResponse.from(entity);
@@ -103,6 +113,11 @@ public class CaseService {
             record.complete(201, write(response));
         }
         return response;
+    }
+
+    private static String correlationId() {
+        String current = MDC.get("correlationId");
+        return current != null ? current : UUID.randomUUID().toString();
     }
 
     private Optional<CaseOutcome> replay(String reporterId, String key, String hash) {

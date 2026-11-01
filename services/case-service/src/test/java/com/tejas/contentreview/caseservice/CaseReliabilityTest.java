@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.when;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -81,7 +82,7 @@ class CaseReliabilityTest {
         when(contentLookup.find(anyString())).thenAnswer(inv ->
                 Optional.of(new ContentInfo(inv.getArgument(0), "creator-1")));
         String body = mvc.perform(post("/api/cases").contentType(MediaType.APPLICATION_JSON)
-                        .header("X-Actor-Id", "reporter-1")
+                        .with(user("reporter-1").roles("REPORTER"))
                         .content("{\"contentId\":\"" + contentId + "\",\"reason\":\"test\"}"))
                 .andReturn().getResponse().getContentAsString();
         return mapper.readTree(body).get("caseId").asText();

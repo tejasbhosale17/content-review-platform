@@ -3,6 +3,7 @@ package com.tejas.contentreview.caseservice;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -66,7 +67,7 @@ class CaseApiTest {
         MockHttpServletRequestBuilder b = post("/api/cases").contentType(MediaType.APPLICATION_JSON)
                 .content("{\"contentId\":\"" + contentId + "\",\"reason\":\"" + reason + "\"}");
         if (actor != null) {
-            b.header("X-Actor-Id", actor);
+            b.with(user(actor).roles("REPORTER"));
         }
         if (key != null) {
             b.header("Idempotency-Key", key);
@@ -86,7 +87,7 @@ class CaseApiTest {
                 .andReturn().getResponse().getContentAsString();
         String caseId = mapper.readTree(body).get("caseId").asText();
 
-        mvc.perform(get("/api/cases/" + caseId))
+        mvc.perform(get("/api/cases/" + caseId).with(user("reporter-1").roles("REPORTER")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.caseId").value(caseId))
                 .andExpect(jsonPath("$.status").value("PENDING_REVIEW"));
@@ -96,11 +97,11 @@ class CaseApiTest {
     void rejectsInvalidInputAndUnknownIds() throws Exception {
         mvc.perform(complaint("reporter-1", null, " ", "")).andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.details.length()").value(2));
-        mvc.perform(complaint(null, null, newContentId(), "x")).andExpect(status().isBadRequest());
+        mvc.perform(complaint(null, null, newContentId(), "x")).andExpect(status().isUnauthorized());
         mvc.perform(complaint("reporter-1", " ", newContentId(), "x")).andExpect(status().isBadRequest());
         mvc.perform(complaint("reporter-1", "k".repeat(129), newContentId(), "x")).andExpect(status().isBadRequest());
         mvc.perform(complaint("reporter-1", null, "missing-1", "x")).andExpect(status().isNotFound());
-        mvc.perform(get("/api/cases/unknown")).andExpect(status().isNotFound());
+        mvc.perform(get("/api/cases/unknown").with(user("admin").roles("ADMIN"))).andExpect(status().isNotFound());
     }
 
     @Test

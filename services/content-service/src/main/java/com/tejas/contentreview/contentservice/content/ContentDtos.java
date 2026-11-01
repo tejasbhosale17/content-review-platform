@@ -10,9 +10,8 @@ public final class ContentDtos {
     private ContentDtos() {
     }
 
-    /** creatorId is taken from the body until authentication is added in the access-control stage. */
+    /** The creator is the authenticated principal, never a client-supplied value. */
     public record CreateContentRequest(
-            @NotBlank @Size(max = 64) String creatorId,
             @NotBlank @Size(max = 200) String title,
             @NotNull Boolean licenseValid,
             @Size(max = 500) String licenseNote) {

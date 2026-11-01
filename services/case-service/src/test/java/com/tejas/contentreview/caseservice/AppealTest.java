@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 
@@ -68,7 +69,7 @@ class AppealTest {
         when(contentLookup.find(anyString())).thenAnswer(inv ->
                 Optional.of(new ContentInfo(inv.getArgument(0), "creator-1")));
         String body = mvc.perform(post("/api/cases").contentType(MediaType.APPLICATION_JSON)
-                        .header("X-Actor-Id", "reporter-1")
+                        .with(user("reporter-1").roles("REPORTER"))
                         .content("{\"contentId\":\"" + contentId + "\",\"reason\":\"test\"}"))
                 .andReturn().getResponse().getContentAsString();
         return new Created(mapper.readTree(body).get("caseId").asText(), contentId);
@@ -94,7 +95,7 @@ class AppealTest {
 
     private MvcResult appeal(String caseId, String key, String statement) throws Exception {
         var request = post("/api/cases/" + caseId + "/appeals").contentType(MediaType.APPLICATION_JSON)
-                .header("X-Actor-Id", "creator-1")
+                .with(user("creator-1").roles("CREATOR"))
                 .content("{\"statement\":\"" + statement + "\"}");
         if (key != null) {
             request.header("Idempotency-Key", key);
@@ -118,7 +119,7 @@ class AppealTest {
         assertThat(body.get("reviewRound").asInt()).isEqualTo(2);
         assertThat(body.get("appealId").asText()).isNotBlank();
 
-        mvc.perform(get("/api/cases/" + c.caseId()))
+        mvc.perform(get("/api/cases/" + c.caseId()).with(user("creator-1").roles("CREATOR")))
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.status").value("APPEAL_PENDING"))
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.reviewRound").value(2));
 

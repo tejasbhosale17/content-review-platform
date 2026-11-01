@@ -7,6 +7,7 @@ import jakarta.validation.Valid;
 import java.time.Instant;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -27,8 +28,8 @@ public class ContentController {
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    public ContentResponse create(@Valid @RequestBody CreateContentRequest request) {
-        Content content = new Content(UUID.randomUUID().toString(), request.creatorId().trim(), request.title().trim(),
+    public ContentResponse create(Authentication auth, @Valid @RequestBody CreateContentRequest request) {
+        Content content = new Content(UUID.randomUUID().toString(), auth.getName(), request.title().trim(),
                 request.licenseValid(), request.licenseNote(), Instant.now());
         return ContentResponse.from(repository.save(content));
     }

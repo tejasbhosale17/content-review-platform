@@ -37,3 +37,25 @@ management:
     web:
       exposure:
         include: health,info,prometheus
+  metrics:
+    tags:
+      service: content-service
+logging:
+  structured:
+    format:
+      console: logstash
+    json:
+      add:
+        service: content-service
+app:
+  security:
+    users:
+      - username: reporter
+        password: ${DEMO_REPORTER_PASSWORD}
+        roles: [REPORTER]
+      - username: creator
+        password: ${DEMO_CREATOR_PASSWORD}
+        roles: [CREATOR]
+      - username: admin
+        password: ${DEMO_ADMIN_PASSWORD}
+        roles: [ADMIN]

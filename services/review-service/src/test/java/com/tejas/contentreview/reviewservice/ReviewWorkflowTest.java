@@ -122,9 +122,15 @@ class ReviewWorkflowTest {
         String caseId = UUID.randomUUID().toString();
         String contentId = UUID.randomUUID().toString();
         stubContent(contentId, false, null);
+        double completedBefore = registry.counter("reviews.completed", "decision", "RESTRICT", "round", "1").count();
+        long processedBefore = registry.timer("kafka.consumer.processing", "group", Topics.GROUP_REVIEW_WORKERS).count();
         send(caseId, contentId, 1, UUID.randomUUID());
 
         assertThat(parse(awaitResults(caseId, 1).get(0)).payload().decision()).isEqualTo(Decision.RESTRICT);
+        assertThat(registry.counter("reviews.completed", "decision", "RESTRICT", "round", "1").count())
+                .isEqualTo(completedBefore + 1);
+        assertThat(registry.timer("kafka.consumer.processing", "group", Topics.GROUP_REVIEW_WORKERS).count())
+                .isGreaterThan(processedBefore);
     }
 
     @Test

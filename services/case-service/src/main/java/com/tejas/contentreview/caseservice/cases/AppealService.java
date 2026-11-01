@@ -21,6 +21,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.HexFormat;
 import java.util.Optional;
 import java.util.UUID;
+import org.slf4j.MDC;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -57,14 +58,16 @@ public class AppealService {
         String statement = request.statement().trim();
         String hash = hash(caseId + "\n" + statement);
 
+        CaseEntity target = cases.findById(caseId)
+                .orElseThrow(() -> ApiException.notFound("Case " + caseId + " not found"));
+        if (!target.getCreatorId().equals(appellantId)) {
+            throw ApiException.forbidden("Only the creator of the content can appeal this case");
+        }
         if (idempotencyKey != null) {
             Optional<AppealOutcome> replay = replay(appellantId, idempotencyKey, hash);
             if (replay.isPresent()) {
                 return replay.get();
             }
-        }
-        if (!cases.existsById(caseId)) {
-            throw ApiException.notFound("Case " + caseId + " not found");
         }
 
         try {
@@ -95,7 +98,7 @@ public class AppealService {
         Appeal appeal = appeals.saveAndFlush(new Appeal(UUID.randomUUID().toString(), caseId, c.getContentId(),
                 appellantId, statement, now()));
         var requested = new EventEnvelope<>(UUID.randomUUID(), "ReviewRequested", 1, Instant.now(), caseId,
-                c.getContentId(), c.getReviewRound(), UUID.randomUUID().toString(),
+                c.getContentId(), c.getReviewRound(), MDC.get("correlationId") != null ? MDC.get("correlationId") : UUID.randomUUID().toString(),
                 new ReviewRequestedPayload(statement, true));
         outbox.add(requested.eventId().toString(), Topics.REVIEW_REQUESTED, caseId, EventCodec.toJson(requested));
         AppealResponse response = new AppealResponse(appeal.getAppealId(), caseId, c.getContentId(), statement,

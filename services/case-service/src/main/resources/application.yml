@@ -30,11 +30,33 @@ spring:
 server:
   port: 8081
 content-service:
-  base-url: ${CONTENT_SERVICE_BASE_URL:http://localhost:8083}
-  connect-timeout: 1s
-  read-timeout: 2s
+  grpc:
+    target: ${CONTENT_SERVICE_GRPC_TARGET:localhost:9090}
+    deadline: 2s
 management:
   endpoints:
     web:
       exposure:
         include: health,info,prometheus
+  metrics:
+    tags:
+      service: case-service
+logging:
+  structured:
+    format:
+      console: logstash
+    json:
+      add:
+        service: case-service
+app:
+  security:
+    users:
+      - username: reporter
+        password: ${DEMO_REPORTER_PASSWORD}
+        roles: [REPORTER]
+      - username: creator
+        password: ${DEMO_CREATOR_PASSWORD}
+        roles: [CREATOR]
+      - username: admin
+        password: ${DEMO_ADMIN_PASSWORD}
+        roles: [ADMIN]

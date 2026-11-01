@@ -9,6 +9,7 @@ import com.tejas.contentreview.reviewservice.content.ContentMetadata;
 import com.tejas.contentreview.reviewservice.content.ContentMetadataClient;
 import com.tejas.contentreview.reviewservice.reliability.OutboxStore;
 import com.tejas.contentreview.reviewservice.reliability.ProcessedEvents;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.UUID;
@@ -30,9 +31,12 @@ public class ReviewService {
     private final ProcessedEvents processed;
     private final OutboxStore outbox;
     private final TransactionTemplate tx;
+    private final MeterRegistry meters;
 
     public ReviewService(ReviewDecisionRepository decisions, ContentMetadataClient metadataClient, ReviewPolicy policy,
-                         ProcessedEvents processed, OutboxStore outbox, PlatformTransactionManager txManager) {
+                         ProcessedEvents processed, OutboxStore outbox, PlatformTransactionManager txManager,
+                         MeterRegistry meters) {
+        this.meters = meters;
         this.decisions = decisions;
         this.metadataClient = metadataClient;
         this.policy = policy;
@@ -78,6 +82,8 @@ public class ReviewService {
             if (stored == null) {
                 log.info("Duplicate review request ignored caseId={} eventId={}", request.caseId(), eventId);
             } else {
+                meters.counter("reviews.completed", "decision", stored.getDecision().name(),
+                        "round", Integer.toString(stored.getReviewRound())).increment();
                 log.info("Review completed caseId={} reviewRound={} decision={} eventId={} correlationId={}",
                         stored.getCaseId(), stored.getReviewRound(), stored.getDecision(), stored.getResultEventId(),
                         stored.getCorrelationId());

@@ -10,6 +10,7 @@ import com.tejas.contentreview.caseservice.web.ApiException;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -32,15 +33,12 @@ public class CaseController {
         this.appealService = appealService;
     }
 
-    /** X-Actor-Id is a temporary stand-in for the authenticated principal added in the access-control stage. */
     @PostMapping
     public ResponseEntity<CaseResponse> create(
-            @RequestHeader("X-Actor-Id") String actorId,
+            Authentication auth,
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
             @Valid @RequestBody CreateCaseRequest request) {
-        if (actorId.isBlank() || actorId.length() > 64) {
-            throw ApiException.badRequest("X-Actor-Id must be 1-64 characters");
-        }
+        String actorId = auth.getName();
         if (idempotencyKey != null && (idempotencyKey.isBlank() || idempotencyKey.length() > MAX_KEY_LENGTH)) {
             throw ApiException.badRequest("Idempotency-Key must be 1-" + MAX_KEY_LENGTH + " characters");
         }
@@ -53,19 +51,18 @@ public class CaseController {
     }
 
     @GetMapping("/{caseId}")
-    public CaseResponse get(@PathVariable String caseId) {
-        return service.getCase(caseId);
+    public CaseResponse get(@PathVariable String caseId, Authentication auth) {
+        boolean admin = auth.getAuthorities().stream().anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN"));
+        return service.getCase(caseId, auth.getName(), admin);
     }
 
     @PostMapping("/{caseId}/appeals")
     public ResponseEntity<AppealResponse> appeal(
             @PathVariable String caseId,
-            @RequestHeader("X-Actor-Id") String actorId,
+            Authentication auth,
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
             @Valid @RequestBody CreateAppealRequest request) {
-        if (actorId.isBlank() || actorId.length() > 64) {
-            throw ApiException.badRequest("X-Actor-Id must be 1-64 characters");
-        }
+        String actorId = auth.getName();
         if (idempotencyKey != null && (idempotencyKey.isBlank() || idempotencyKey.length() > MAX_KEY_LENGTH)) {
             throw ApiException.badRequest("Idempotency-Key must be 1-" + MAX_KEY_LENGTH + " characters");
         }

@@ -96,7 +96,7 @@ Implemented:
 - Idempotency: same key and payload replays the original response (`Idempotency-Replayed: true`); same key with a different payload returns 409.
 - Stale-event protection: case-service applies a result only for the expected round and state; content-service compares rounds atomically (stage 3) and now also dedupes by event ID (stage 4). The review policy still decides round 2 from the synthetic license note fixture (`APPEAL_EVIDENCE_OK`), not from the appeal statement.
 - Found and fixed during testing: the compare-and-set clears the persistence context and detached the idempotency record, so its response was not saved and replays returned 409. The record is now saved explicitly.
-- Interim: any caller can appeal; restricting appeals to the content creator comes with access control in stage 8.
+- Interim: appeals are restricted to the content creator (stage 7).
 
 Verification (`.\mvnw.cmd -B verify`, real MySQL 8.4 and Kafka Testcontainers): BUILD SUCCESS.
 - contracts: 6 passed
@@ -105,5 +105,22 @@ Verification (`.\mvnw.cmd -B verify`, real MySQL 8.4 and Kafka Testcontainers): 
 - content-service: 14 passed
 - Not verified: a full appeal flowing through the three real services in one run (the case-service tests inject review results through Kafka); to be covered by the Compose/Kubernetes and recovery stages.
 
+## Stage 7 - Access control and observability (complete)
+Implemented:
+- HTTP Basic (stateless, CSRF off) in all three services with demo accounts `reporter` (REPORTER), `creator` (CREATOR) and `admin` (ADMIN). Passwords come only from `DEMO_*_PASSWORD` environment variables with no defaults, so a service fails to start without them; they are BCrypt-hashed in memory.
+- Rules: only REPORTER files complaints (reporter = authenticated user); only the content's creator can appeal (403 otherwise, 404 first for an unknown case); a case is readable by its reporter, its creator or ADMIN; only CREATOR creates content and `creatorId` is the authenticated user (the body field is gone); `/internal/**` and non-health actuator endpoints are ADMIN-only; `/actuator/health` is public. 401/403 return the same JSON error shape. The temporary `X-Actor-Id` header was removed.
+- case-service now looks up content over gRPC (2s deadline, content-service port 9090 is not an HTTP API and needs no service credentials) instead of the REST endpoint, which would otherwise have needed service credentials.
+- Structured JSON console logs (logstash format) with `service` and MDC fields `caseId`, `eventId`, `reviewRound`, `correlationId`. HTTP requests accept or generate `X-Correlation-Id` (echoed on the response, invalid values replaced); it is carried into the outbox events, and Kafka listeners restore it from the event envelope.
+- Metrics (Micrometer, `/actuator/prometheus`, ADMIN-only): `complaints.accepted`, `reviews.completed{decision,round}`, `kafka.consumer.processing{group}` timer, plus the existing outbox and retry/dead-letter metrics; all tagged with `service`.
+
+Verification (`.\mvnw.cmd -B verify`, real MySQL 8.4 and Kafka Testcontainers): BUILD SUCCESS.
+- contracts: 6 passed
+- case-service: 39 passed (new: `SecurityTest` 7 - 401/403, HTTP Basic, party-only case reads, creator-only appeals, admin-only operations with public health, correlation ID reaching the outbox event, complaint counter; `GrpcContentLookupTest` 5 replaces the REST lookup test)
+- review-service: 25 passed (new `ReviewSecurityTest`; `reviews.completed` and processing timer asserted in `ReviewWorkflowTest`)
+- content-service: 19 passed (`ContentApiTest` rewritten to 9 tests incl. security and correlation header)
+- Existing tests use Spring Security's `user()` post-processor for most calls; the Basic-auth path with real configured passwords is exercised in the security tests.
+- Observed in test output: JSON log lines contain `service` and the MDC fields.
+- Not verified: Prometheus scrape output over HTTP (metrics are asserted through the `MeterRegistry`), the `DltController` replay with an admin credential (only the 401/403 rejections are tested), and the demo credentials end to end across running services.
+
 ## Next stage
-`feat: add access control and observability` - HTTP Basic roles, MDC logging, Micrometer metrics, admin-only DLT replay.
+`infra: add local Kubernetes deployment` - Dockerfiles, Compose, kind manifests (kind and kubectl still need installing).
