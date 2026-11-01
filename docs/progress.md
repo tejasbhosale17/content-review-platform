@@ -150,5 +150,16 @@ Verification:
 - `scripts\recovery-test.ps1 -Count 10`: all 4 checks passed (worker down: cases stay pending and finish after restart; Kafka down: complaints accepted and finish after recovery).
 - Not run: kind performance, multi-replica throughput, MySQL outage, soak tests, MirrorMaker 2 profile. Numbers are from one laptop with the load generator on the same host.
 
+## CI and documentation stage (complete)
+Implemented:
+- `.github/workflows/build.yml`: on push to `main` and on pull requests, `./mvnw -B verify` on Java 21 (Testcontainers use the runner's Docker), surefire reports uploaded on failure, and a matrix job that builds each service image from `infra/docker/Dockerfile` without pushing.
+- `mvnw` committed with the executable bit (it was 100644, which would fail on a Linux runner).
+- `docs/architecture.md` (Mermaid diagram, services, flow, reliability, access control, deployment and limits), `docs/events.md` (topics, partitions, groups, envelope and payloads, delivery and ordering assumptions, dead-letter replay, gRPC contract), README links, status list and API notes.
+
+Verification:
+- Workflow YAML parses; the CI-style image build (`docker build --build-arg SERVICE=content-service`) succeeded locally. The Maven build was last run in the previous stage (no Java changed here).
+- The GitHub Actions run itself is recorded in the final report after the push (see the repository's Actions tab); it was not run before this commit.
+- Not done: the optional MirrorMaker 2 replication profile (spec section 13).
+
 ## Next stage
-`ci: add build workflow and project documentation` - GitHub Actions build, `docs/architecture.md`, `docs/events.md`, API examples and Mermaid diagram.
+Optional: MirrorMaker 2 replication profile; final walkthrough and demo notes.

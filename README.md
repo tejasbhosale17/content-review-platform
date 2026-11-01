@@ -2,7 +2,7 @@
 
 Portfolio backend (Java 21, Spring Boot, Kafka, gRPC, MySQL) where complaints about content are reviewed asynchronously and restrictions can be appealed once.
 
-Status: in progress - see [docs/progress.md](docs/progress.md).
+Status: in progress - see [docs/progress.md](docs/progress.md). CI: GitHub Actions builds and tests every push and pull request (`.github/workflows/build.yml`).
 
 ## Build
 
@@ -43,6 +43,8 @@ Limitations: one Kafka broker (replication factor 1) and one MySQL instance with
 - Metrics: `complaints.accepted`, `reviews.completed`, `kafka.consumer.processing`, `outbox.*`, `kafka.consumer.retries`, `kafka.consumer.dead_lettered`.
 
 ## API (current)
+
+Case statuses: `PENDING_REVIEW`, `DISMISSED` (round-1 ALLOW), `RESTRICTED` (round-1 RESTRICT), `APPEAL_PENDING`, `RESTORED` and `RESTRICTION_CONFIRMED` (round-2 outcomes). Details: [docs/architecture.md](docs/architecture.md), [docs/events.md](docs/events.md), measurements: [docs/results.md](docs/results.md).
 
 ```powershell
 # create content (creator is the authenticated user)
