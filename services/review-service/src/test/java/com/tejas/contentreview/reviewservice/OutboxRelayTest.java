@@ -127,6 +127,24 @@ class OutboxRelayTest {
     }
 
     @Test
+    void crashAfterSendBeforeMarkPublishedCausesAResendOfTheSameEventId() throws Exception {
+        String eventId = add("case-1");
+        List<String> sent = new ArrayList<>();
+        // The broker accepts the message, then the relay "dies": its lease is gone before it can mark the row published.
+        OutboxSender sendThenLoseLease = (topic, key, payload) -> {
+            sent.add(payload);
+            jdbc.update("UPDATE outbox_events SET lease_owner = 'someone-else', lease_until = DATE_SUB(UTC_TIMESTAMP(6), INTERVAL 1 SECOND)");
+        };
+        assertThat(relay(sendThenLoseLease, 10).publishBatch()).isZero();
+        assertThat(pending()).isEqualTo(1);
+
+        assertThat(relay((topic, key, payload) -> sent.add(payload), 10).publishBatch()).isEqualTo(1);
+        // At-least-once: the same event (same id) is delivered twice and consumers deduplicate on it.
+        assertThat(sent).hasSize(2).allSatisfy(p -> assertThat(p).contains(eventId));
+        assertThat(pending()).isZero();
+    }
+
+    @Test
     void twoConcurrentRelaysNeverSendTheSameRowTwice() throws Exception {
         Set<String> ids = new HashSet<>();
         for (int i = 0; i < 40; i++) {

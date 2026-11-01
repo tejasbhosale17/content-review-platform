@@ -137,5 +137,18 @@ Verification (actual runs on Docker Desktop 29.9.2, kind v0.33.0, kubectl v1.36.
 - Not verified: rolling update behaviour under load, pod/node failure recovery (next stage), any non-kind cluster, image scanning.
 - Limits: one Kafka broker (replication factor 1, no HA), one MySQL instance with three logical databases, plaintext Kafka and HTTP, demo credentials. The kind smoke test skips the `reviews.completed` counter assertion because counters are per replica and the port-forward reaches one pod.
 
+## Test stage - recovery and performance checks (complete)
+Spec section 11 coverage audit (existing tests were kept; gaps filled):
+- Added `ReviewWorkflowTest.workerRestartWithQueuedMessagesProcessesEachOnceWithoutLoss` (item 9): the review-workers listener containers are stopped, 12 requests are queued in Kafka, nothing is decided while down, then the containers start and each case gets exactly one decision and one outbox row.
+- Added `OutboxRelayTest.crashAfterSendBeforeMarkPublishedCausesAResendOfTheSameEventId` (item 11): the lease is lost after a successful send; the row stays pending and is re-sent with the same event id (at-least-once, consumers deduplicate).
+- Items 10, 12, 13, 14, 15 and 16 were already covered (`brokerOutageKeepsEventPending...`, `failedProjectionRollsBackItsReceipt...`, lease/competing relay tests, gRPC deadline/unavailability tests, DLT replay tests, security tests).
+- `load-tests/load-test.ps1` (unique content/case pairs, measures HTTP latency, end-to-end latency, accepted/failed/completed and backlog) and `scripts/recovery-test.ps1` (stops review-service, then Kafka, while complaints arrive).
+
+Verification:
+- `.\mvnw.cmd -B verify`: BUILD SUCCESS - contracts 6, case-service 39, review-service 27, content-service 19.
+- Compose load runs of 50, 200 and 500 pairs: no failures, no backlog; exact numbers, hardware and commands are in [results.md](results.md).
+- `scripts\recovery-test.ps1 -Count 10`: all 4 checks passed (worker down: cases stay pending and finish after restart; Kafka down: complaints accepted and finish after recovery).
+- Not run: kind performance, multi-replica throughput, MySQL outage, soak tests, MirrorMaker 2 profile. Numbers are from one laptop with the load generator on the same host.
+
 ## Next stage
-`test: add recovery and performance checks` - worker restart with queued messages, crash between DB commit and publish, `docs/results.md` with measured numbers only.
+`ci: add build workflow and project documentation` - GitHub Actions build, `docs/architecture.md`, `docs/events.md`, API examples and Mermaid diagram.

@@ -55,6 +55,8 @@ class ReviewWorkflowTest {
     MeterRegistry registry;
     @Autowired
     DltReplayService replayService;
+    @Autowired
+    org.springframework.kafka.config.KafkaListenerEndpointRegistry listenerRegistry;
 
     @MockitoBean
     ContentMetadataClient metadataClient;
@@ -249,6 +251,36 @@ class ReviewWorkflowTest {
 
         assertThat(replayed).isGreaterThanOrEqualTo(1);
         assertThat(parse(awaitResults(caseId, 1).get(0)).payload().decision()).isEqualTo(Decision.ALLOW);
+    }
+
+    @Test
+    void workerRestartWithQueuedMessagesProcessesEachOnceWithoutLoss() {
+        var workers = listenerRegistry.getListenerContainers().stream()
+                .filter(c -> Topics.GROUP_REVIEW_WORKERS.equals(c.getGroupId())).toList();
+        assertThat(workers).isNotEmpty();
+        workers.forEach(c -> c.stop());
+        List<String> caseIds = new ArrayList<>();
+        try {
+            for (int i = 0; i < 12; i++) {
+                String caseId = UUID.randomUUID().toString();
+                String contentId = UUID.randomUUID().toString();
+                stubContent(contentId, i % 2 == 0, null);
+                send(caseId, contentId, 1, UUID.randomUUID());
+                caseIds.add(caseId);
+            }
+            // While the worker is down nothing is decided; the messages stay queued in Kafka.
+            assertThat(decisions.findAll().stream().filter(d -> caseIds.contains(d.getCaseId()))).isEmpty();
+        } finally {
+            workers.forEach(c -> c.start());
+        }
+
+        await().atMost(Duration.ofSeconds(60)).pollInterval(Duration.ofMillis(200)).untilAsserted(() ->
+                assertThat(decisions.findAll().stream().filter(d -> caseIds.contains(d.getCaseId()))).hasSize(12));
+        for (String caseId : caseIds) {
+            assertThat(awaitResults(caseId, 1)).hasSize(1);
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM outbox_events WHERE message_key = ?", Integer.class, caseId))
+                    .isEqualTo(1);
+        }
     }
 
     private ConsumerRecord<String, String> awaitDeadLetters(String caseId) {
